@@ -22,7 +22,7 @@ vi.mock('@/db', () => ({
       update: async (projectId: number, payload: Partial<Project>) => {
         const index = mockDbState.projects.findIndex((project) => project.id === projectId)
         if (index >= 0) {
-          mockDbState.projects[index] = { ...mockDbState.projects[index], ...payload }
+          mockDbState.projects[index] = { ...mockDbState.projects[index], ...payload } as Project & { id: number }
         }
       },
       delete: async (projectId: number) => {
@@ -89,7 +89,7 @@ describe('projects store', () => {
       notes: 'Notes',
       isPaused: false,
     })
-    expect(store.projects[0].createdAt).toBeTypeOf('string')
+    expect(store.projects[0]!.createdAt).toBeTypeOf('string')
   })
 
   it('rejects empty project name on add', async () => {
@@ -139,7 +139,7 @@ describe('projects store', () => {
     const store = useProjectsStore()
     await store.setProjectPaused(1, true)
 
-    expect(store.projects[0].isPaused).toBe(true)
+    expect(store.projects[0]!.isPaused).toBe(true)
   })
 
   it('deletes project and related time entries', async () => {
