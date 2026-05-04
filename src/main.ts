@@ -7,33 +7,49 @@ import App from './App.vue'
 import router from './router'
 import { useTimeEntriesStore } from './stores/timeEntries'
 import { useThemeStore } from './stores/theme'
+import { useSyncStore } from './stores/sync'
+import { useProjectsStore } from './stores/projects'
 
 const app = createApp(App)
 const pinia = createPinia()
 
-function setTabFavicon(isAnyProjectActive: boolean) {
-	const favicon = document.querySelector<HTMLLinkElement>("link[rel~='icon']")
-	if (!favicon) {
-		return
-	}
+app.use(pinia)
 
-	favicon.href = isAnyProjectActive ? '/task-clock.svg' : '/task-clock-inactive.svg'
+async function setupApp() {
+  const timeEntriesStore = useTimeEntriesStore(pinia)
+  const themeStore = useThemeStore(pinia)
+  const syncStore = useSyncStore(pinia)
+  const projectsStore = useProjectsStore(pinia)
+
+  themeStore.initialize()
+
+  if (!syncStore.isSignedIn) {
+    // Not signed in – load data from local DB
+    void timeEntriesStore.loadEntries()
+    void projectsStore.loadProjects()
+  }
+  // init() sets up store references, polling, and syncs with Drive if signed in
+  await syncStore.init()
+
+  watch(
+    () => timeEntriesStore.entries.some((entry) => !entry.endAt),
+    (isAnyProjectActive) => {
+      setTabFavicon(isAnyProjectActive)
+    },
+    { immediate: true },
+  )
 }
 
-const timeEntriesStore = useTimeEntriesStore(pinia)
-const themeStore = useThemeStore(pinia)
+function setTabFavicon(isAnyProjectActive: boolean) {
+  const favicon = document.querySelector<HTMLLinkElement>("link[rel~='icon']")
+  if (!favicon) {
+    return
+  }
+  favicon.href = isAnyProjectActive ? '/task-clock.svg' : '/task-clock-inactive.svg'
+}
 
-themeStore.initialize()
-void timeEntriesStore.loadEntries()
-
-watch(
-	() => timeEntriesStore.entries.some((entry) => !entry.endAt),
-	(isAnyProjectActive) => {
-		setTabFavicon(isAnyProjectActive)
-	},
-	{ immediate: true },
-)
-
-app.use(pinia)
 app.use(router)
-app.mount('#app')
+
+void setupApp().then(() => {
+  app.mount('#app')
+})

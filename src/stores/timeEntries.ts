@@ -2,9 +2,16 @@ import { defineStore } from 'pinia'
 import { db } from '@/db'
 import type { TimeEntry } from '@/types'
 import { formatDateToDayKey } from '@/utils/time'
+import { useSyncStore } from './sync'
+import { useProjectsStore } from './projects'
 
 interface TimeEntriesState {
   entries: TimeEntry[]
+}
+
+function nextEntryId(entries: TimeEntry[]): number {
+  const maxId = entries.reduce((max, entry) => Math.max(max, entry.id ?? 0), 0)
+  return maxId + 1
 }
 
 function intervalsOverlap(startA: number, endA: number, startB: number, endB: number): boolean {
@@ -29,6 +36,8 @@ export const useTimeEntriesStore = defineStore('timeEntries', {
 
   actions: {
     async loadEntries() {
+      const syncStore = useSyncStore()
+      if (syncStore.isSignedIn) return // Drive data is already in memory
       this.entries = await db.timeEntries.orderBy('startAt').toArray()
     },
 
@@ -37,12 +46,28 @@ export const useTimeEntriesStore = defineStore('timeEntries', {
     },
 
     async clockIn(projectId: number) {
+      const syncStore = useSyncStore()
+      const projectsStore = useProjectsStore()
       const activeForProject = this.entries.find((entry) => entry.projectId === projectId && !entry.endAt)
       if (activeForProject) {
         return
       }
 
+      syncStore.markLocalChange()
       const now = new Date()
+
+      if (syncStore.isSignedIn) {
+        this.entries.push({
+          id: nextEntryId(this.entries),
+          projectId,
+          startAt: now.toISOString(),
+          note: '',
+          dayKey: formatDateToDayKey(now),
+        })
+        await syncStore.pushCloudFromStores(projectsStore.projects, this.entries)
+        return
+      }
+
       await db.timeEntries.add({
         projectId,
         startAt: now.toISOString(),
@@ -54,8 +79,18 @@ export const useTimeEntriesStore = defineStore('timeEntries', {
     },
 
     async clockOut(projectId: number) {
+      const syncStore = useSyncStore()
+      const projectsStore = useProjectsStore()
       const openEntry = this.entries.find((entry) => entry.projectId === projectId && !entry.endAt)
       if (!openEntry?.id) {
+        return
+      }
+
+      syncStore.markLocalChange()
+
+      if (syncStore.isSignedIn) {
+        openEntry.endAt = new Date().toISOString()
+        await syncStore.pushCloudFromStores(projectsStore.projects, this.entries)
         return
       }
 
@@ -67,8 +102,33 @@ export const useTimeEntriesStore = defineStore('timeEntries', {
     },
 
     async switchToProject(projectId: number) {
+      const syncStore = useSyncStore()
+      const projectsStore = useProjectsStore()
+      syncStore.markLocalChange()
       const now = new Date()
       const nowIso = now.toISOString()
+
+      if (syncStore.isSignedIn) {
+        for (const entry of this.entries) {
+          if (!entry.endAt && entry.projectId !== projectId) {
+            entry.endAt = nowIso
+          }
+        }
+
+        const targetStillActive = this.entries.some((entry) => entry.projectId === projectId && !entry.endAt)
+        if (!targetStillActive) {
+          this.entries.push({
+            id: nextEntryId(this.entries),
+            projectId,
+            startAt: nowIso,
+            note: '',
+            dayKey: formatDateToDayKey(now),
+          })
+        }
+
+        await syncStore.pushCloudFromStores(projectsStore.projects, this.entries)
+        return
+      }
 
       await db.transaction('rw', db.timeEntries, async () => {
         const activeEntries = await db.timeEntries.filter((entry) => !entry.endAt).toArray()
@@ -94,6 +154,18 @@ export const useTimeEntriesStore = defineStore('timeEntries', {
     },
 
     async updateEntryNote(entryId: number, note: string) {
+      const syncStore = useSyncStore()
+      const projectsStore = useProjectsStore()
+      syncStore.markLocalChange()
+
+      if (syncStore.isSignedIn) {
+        const entry = this.entries.find((item) => item.id === entryId)
+        if (!entry) return
+        entry.note = note.trim()
+        await syncStore.pushCloudFromStores(projectsStore.projects, this.entries)
+        return
+      }
+
       await db.timeEntries.update(entryId, { note: note.trim() })
       await this.loadEntries()
     },
@@ -123,6 +195,8 @@ export const useTimeEntriesStore = defineStore('timeEntries', {
     },
 
     async updateEntryTimes(entryId: number, startAt: string, endAt?: string) {
+      const syncStore = useSyncStore()
+      const projectsStore = useProjectsStore()
       const startDate = new Date(startAt)
       const endDate = endAt ? new Date(endAt) : undefined
 
@@ -138,6 +212,20 @@ export const useTimeEntriesStore = defineStore('timeEntries', {
         throw new Error('זמן יציאה חייב להיות אחרי זמן כניסה')
       }
 
+      syncStore.markLocalChange()
+
+      if (syncStore.isSignedIn) {
+        const entry = this.entries.find((item) => item.id === entryId)
+        if (!entry) return
+
+        entry.startAt = startDate.toISOString()
+        entry.endAt = endDate?.toISOString()
+        entry.dayKey = formatDateToDayKey(startDate)
+
+        await syncStore.pushCloudFromStores(projectsStore.projects, this.entries)
+        return
+      }
+
       await db.timeEntries.update(entryId, {
         startAt: startDate.toISOString(),
         endAt: endDate?.toISOString(),
@@ -148,6 +236,16 @@ export const useTimeEntriesStore = defineStore('timeEntries', {
     },
 
     async deleteEntry(entryId: number) {
+      const syncStore = useSyncStore()
+      const projectsStore = useProjectsStore()
+      syncStore.markLocalChange()
+
+      if (syncStore.isSignedIn) {
+        this.entries = this.entries.filter((entry) => entry.id !== entryId)
+        await syncStore.pushCloudFromStores(projectsStore.projects, this.entries)
+        return
+      }
+
       await db.timeEntries.delete(entryId)
       await this.loadEntries()
     },
