@@ -1,5 +1,7 @@
 # Clock - Work Time Tracker
 
+**Live app:** [time-track.thoughtsthinking.co.il](https://time-track.thoughtsthinking.co.il/)
+
 Clock is a single-page time tracking app for managing work hours per project.
 It is optimized for Hebrew and RTL usage, stores data locally in the browser, and includes daily and monthly reporting screens.
 
