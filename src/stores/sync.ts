@@ -17,6 +17,10 @@ const FILE_ID_KEY = 'clock-drive-file-id'
 const USER_KEY = 'clock-drive-user'
 const SYNC_BROADCAST_CHANNEL = 'clock-sync-channel'
 
+function isDocumentVisible(): boolean {
+  return typeof document === 'undefined' || document.visibilityState !== 'hidden'
+}
+
 export type SyncStatus = 'idle' | 'syncing' | 'success' | 'error' | 'conflict'
 
 interface SyncState {
@@ -390,8 +394,10 @@ export const useSyncStore = defineStore('sync', {
             }
           }
           
-          // Auto-sync on app start
-          await this.sync()
+          // Auto-sync on app start when the tab is active
+          if (isDocumentVisible()) {
+            await this.sync()
+          }
         } catch {
           localStorage.removeItem(USER_KEY)
         }
@@ -888,6 +894,10 @@ export const useSyncStore = defineStore('sync', {
 
       // Background pull from Drive for updates coming from other browsers/devices.
       const startPolling = () => {
+        if (!isDocumentVisible()) {
+          return
+        }
+
         if (pollInterval) clearInterval(pollInterval)
 
         pollInterval = setInterval(() => {
@@ -911,7 +921,7 @@ export const useSyncStore = defineStore('sync', {
       watch(
         () => this.isSignedIn,
         (isSignedIn) => {
-          if (isSignedIn) {
+          if (isSignedIn && isDocumentVisible()) {
             startPolling()
             return
           }
@@ -919,6 +929,20 @@ export const useSyncStore = defineStore('sync', {
           stopPolling()
         },
       )
+
+      document.addEventListener('visibilitychange', () => {
+        if (!isDocumentVisible()) {
+          stopPolling()
+          return
+        }
+
+        if (this.isSignedIn) {
+          startPolling()
+          if (this.status !== 'syncing') {
+            void this.sync()
+          }
+        }
+      })
 
       if (this.isSignedIn) {
         startPolling()
@@ -933,7 +957,7 @@ export const useSyncStore = defineStore('sync', {
 
           if (message.type === 'sync-completed') {
             // Fast path for same-browser tabs. Different browsers still rely on polling.
-            if (this.isSignedIn && this.status !== 'syncing') {
+            if (this.isSignedIn && isDocumentVisible() && this.status !== 'syncing') {
               void this.sync()
             }
           }
